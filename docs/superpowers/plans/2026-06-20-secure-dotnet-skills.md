@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a multi-tool collection of eight high-quality, judgment-style agent skills for secure .NET on Azure work, packaged as a Claude Code plugin and consumable from the open `SKILL.md` standard by Codex/Cursor/Gemini.
+**Goal:** Ship a multi-tool collection of twelve high-quality, judgment-style agent skills for production-grade, secure .NET on Azure work (security, design, performance, concurrency, observability), packaged as a Claude Code plugin and consumable from the open `SKILL.md` standard by Codex/Cursor/Gemini.
 
 **Architecture:** Each skill is a `skills/<name>/SKILL.md` folder (the cross-tool source of truth) plus a worked example in `examples/<name>/`. A `.claude-plugin/` manifest exposes them to Claude Code. There is no code and no build step — the deliverables are markdown skills; the quality gate is the `skill-reviewer` agent (+ `plugin-validator` for manifests), the markdown analogue of tests.
 
@@ -385,21 +385,130 @@ Follow the contract. Content:
 
 ---
 
-### Task 10: README, install docs, and whole-collection consistency
+### Task 10: Skill — solid-review
+
+**Files:**
+- Create: `skills/solid-review/SKILL.md`
+- Create: `examples/solid-review/README.md`
+
+Follow the contract. Content:
+
+- **`description`:** `Use when reviewing C# / .NET code for SOLID design adherence — single responsibility, open/closed, Liskov, interface segregation, dependency inversion — to surface coupling and concrete refactor opportunities.`
+- **Process:** (1) identify the class/module under review; (2) check each SOLID principle with concrete C# lenses; (3) name the smell and the principle it violates; (4) propose the minimal refactor with the C# mechanism; (5) prioritize — flag the violations that actually cause coupling or churn, not stylistic nits.
+- **C# / .NET checks (must include, per principle):**
+  - **SRP:** god classes/services mixing IO, business logic, and mapping; fat controllers; "and" in the type's responsibility; more than one reason to change.
+  - **OCP:** growing `switch`/`if-else` on a type discriminator that must be edited for each new case → strategy/polymorphism, `IEnumerable<IHandler>`.
+  - **LSP:** overrides that `throw new NotSupportedException()`/`NotImplementedException()`; subtypes weakening postconditions or strengthening preconditions; pervasive `is`/`as` downcasts.
+  - **ISP:** fat interfaces with many unrelated members; clients forced to implement no-op methods; split into role interfaces.
+  - **DIP:** `new`-ing concrete dependencies (`new HttpClient()`, `new SqlConnection()`) inside a class instead of constructor injection; depending on concretes rather than abstractions; hidden coupling to `DateTime.Now`/`static` state.
+- **Red flags:** `new HttpClient()` inside a service; `switch(type)` returning behavior; `throw new NotImplementedException()` in an override; an interface with 10+ members; a class constructing its own dependencies; static mutable singletons.
+- **Example (`examples/solid-review/README.md`):** a god `OrderService` doing validation + EF persistence + email sending → split into focused units behind injected abstractions (SRP + DIP), with the before/after.
+
+- [ ] **Step 1: Write `skills/solid-review/SKILL.md`.**
+- [ ] **Step 2: Write the example.**
+- [ ] **Step 3: Self-review** (all five principles covered with C# specifics; example present).
+- [ ] **Step 4: Commit** — `feat: add solid-review skill`
+
+---
+
+### Task 11: Skill — dotnet-performance-review
+
+**Files:**
+- Create: `skills/dotnet-performance-review/SKILL.md`
+- Create: `examples/dotnet-performance-review/README.md`
+
+Follow the contract. Content:
+
+- **`description`:** `Use when reviewing .NET code for performance — allocations and GC pressure, async/IO misuse, hot-path LINQ, repeated enumeration, string handling, caching, and serialization.`
+- **Process:** (1) find the hot paths (request handlers, loops, serialization); (2) check allocations and GC pressure; (3) check async/IO; (4) check LINQ/enumeration; (5) check caching and reuse; (6) prioritize by impact and recommend measuring (BenchmarkDotNet / profiler) before micro-optimizing.
+- **.NET checks (must include):**
+  - Allocations: `string` concatenation in loops → `StringBuilder` / interpolated-string handlers; boxing of value types; closures/`params` in hot loops; LINQ allocating in hot paths.
+  - `Span<T>`/`Memory<T>`/`ArrayPool<T>` for buffers; avoid needless `ToList()`/`ToArray()` materialization.
+  - Multiple enumeration of the same `IEnumerable` (e.g. `.Count()` then `foreach`); materialize once.
+  - Async/IO: sync-over-async (`.Result`/`.Wait()`), `async void`, missing streaming (`IAsyncEnumerable`), parallel IO via `Task.WhenAll`.
+  - `IHttpClientFactory` reuse instead of `new HttpClient()` per call (socket exhaustion).
+  - Caching: `IMemoryCache` / `HybridCache` / distributed cache for expensive repeated work; cache-stampede protection.
+  - Serialization: reuse a single `JsonSerializerOptions`; System.Text.Json source generation; avoid heavy serializers in hot paths.
+- **Red flags:** `.Result` / `.Wait()` in a request path; `new HttpClient()` per call; `string +=` in a loop; enumerating an `IEnumerable` twice; `new JsonSerializerOptions()` per call; `async void`; `.ToList()` purely to count.
+- **Example:** a handler with sync-over-async + per-call `HttpClient` + double enumeration → fixed (async all the way, injected `IHttpClientFactory`, single materialization), noting "measure first".
+
+- [ ] **Step 1: Write the SKILL.md.**
+- [ ] **Step 2: Write the example.**
+- [ ] **Step 3: Self-review.**
+- [ ] **Step 4: Commit** — `feat: add dotnet-performance-review skill`
+
+---
+
+### Task 12: Skill — async-concurrency-review
+
+**Files:**
+- Create: `skills/async-concurrency-review/SKILL.md`
+- Create: `examples/async-concurrency-review/README.md`
+
+Follow the contract. Content:
+
+- **`description`:** `Use when reviewing asynchronous and concurrent .NET code — async/await correctness, deadlocks, cancellation propagation, and thread safety of shared state.`
+- **Process:** (1) map the async call chains and any shared mutable state; (2) check for sync-over-async / deadlock risks; (3) check cancellation propagation; (4) check thread safety; (5) check fire-and-forget; (6) recommend fixes.
+- **.NET checks (must include):**
+  - Sync-over-async: `.Result` / `.Wait()` / `GetAwaiter().GetResult()` → deadlock risk and thread-pool starvation; go async all the way.
+  - `async void` outside event handlers (unobserved exceptions); always return `Task`.
+  - `ConfigureAwait(false)` in library code (not required in ASP.NET Core app code, but matters in shared libraries).
+  - `CancellationToken` accepted and propagated through the whole chain and honored inside loops.
+  - Fire-and-forget (`_ = DoAsync()`) swallowing exceptions; use a safe background pattern (`IHostedService`/channel).
+  - Shared mutable state without synchronization; non-thread-safe types across threads; **`DbContext` used concurrently** (it is not thread-safe); `static` mutable state.
+  - `lock` cannot wrap `await` → use `SemaphoreSlim`; `Task.Run` misuse for IO; parallelism via `Task.WhenAll` / `Parallel.ForEachAsync` with throttling.
+- **Red flags:** `.Result` / `.Wait()` in the request path; `async void` non-handler; a `lock` block containing `await`; a single `DbContext` shared across `Task.WhenAll`; fire-and-forget without exception handling; a method doing IO with no `CancellationToken`.
+- **Example:** a deadlock-prone `.Result` call plus a `DbContext` shared across `Task.WhenAll` → fixed (async all the way; one scoped `DbContext` per parallel operation).
+
+- [ ] **Step 1: Write the SKILL.md.**
+- [ ] **Step 2: Write the example.**
+- [ ] **Step 3: Self-review.**
+- [ ] **Step 4: Commit** — `feat: add async-concurrency-review skill`
+
+---
+
+### Task 13: Skill — observability-review
+
+**Files:**
+- Create: `skills/observability-review/SKILL.md`
+- Create: `examples/observability-review/README.md`
+
+Follow the contract. Content:
+
+- **`description`:** `Use when reviewing logging, tracing, and metrics in a .NET app — structured logging, OpenTelemetry, correlation, and avoiding PII / secret leakage in telemetry.`
+- **Process:** (1) inventory the logging/tracing/metrics setup; (2) check structured-logging usage; (3) check trace/correlation propagation; (4) check what is logged (levels, PII, secrets); (5) check metrics and health; (6) recommend improvements.
+- **.NET checks (must include):**
+  - Structured logging: `ILogger` message templates with named placeholders (`_logger.LogInformation("User {UserId} did {Action}", id, action)`) — never string-interpolated (`$"..."`) log messages.
+  - Appropriate log levels; no chatty `Information` in hot paths; exceptions logged with the exception object (`LogError(ex, "...")`), not just a string.
+  - OpenTelemetry tracing/metrics (`AddOpenTelemetry().WithTracing(...).WithMetrics(...)`); `ActivitySource`; W3C trace-context propagation; trace/correlation id present in log scope.
+  - No PII / secrets / tokens in log messages or trace attributes; redaction; sampling strategy.
+  - Metrics via `Meter` / `Counter` / `Histogram` for key signals (RED); `AddHealthChecks` endpoints.
+  - Centralized sink (Application Insights / Log Analytics / OTLP exporter); `BeginScope` for per-request context.
+- **Red flags:** `LogInformation($"...{token}...")`; logging full request/response bodies; `catch { _logger.LogError("failed"); }` (no exception object); no correlation id; PII in trace attributes; no health checks; secrets in telemetry.
+- **Example:** interpolated log lines that leak a token and an exception logged without its stack → fixed (structured templates, redaction, `LogError(ex, ...)`, correlation via trace context).
+
+- [ ] **Step 1: Write the SKILL.md.**
+- [ ] **Step 2: Write the example.**
+- [ ] **Step 3: Self-review.**
+- [ ] **Step 4: Commit** — `feat: add observability-review skill`
+
+---
+
+### Task 14: README, install docs, and whole-collection consistency
 
 **Files:**
 - Modify: `README.md` (replace skeleton with full content)
-- Review: all eight `skills/*/SKILL.md` for consistency
+- Review: all twelve `skills/*/SKILL.md` for consistency
 
 **Interfaces:**
-- Consumes: all eight skills from Tasks 2–9.
+- Consumes: all twelve skills from Tasks 2–13.
 
 - [ ] **Step 1: Write the full `README.md`**
 
 Replace `README.md` with content covering, in this order:
-1. Title + one-paragraph pitch (depth over breadth; secure .NET on Azure judgment skills).
+1. Title + one-paragraph pitch (depth over breadth; production-grade & secure .NET on Azure judgment skills spanning security, design, performance, concurrency, and observability).
 2. **Why** — the gap it fills (shallow lists vs reviewed, .NET-specific depth).
-3. **Skills** — a table of all 8: name (link to its SKILL.md), one-line "use when" trigger.
+3. **Skills** — a table of all 12, grouped (Security & secrets; Design; Performance & concurrency; Observability): name (link to its SKILL.md), one-line "use when" trigger.
 4. **Install**:
    - Claude Code: ```/plugin marketplace add tunahanaliozturk/secure-dotnet-skills``` then ```/plugin install secure-dotnet-skills@secure-dotnet-skills```.
    - Codex / Cursor / Gemini CLI: clone the repo and copy `skills/<name>/` into the tool's skills directory (give the concrete path/command for each: Codex `~/.codex/skills/`, Cursor project `.cursor/`-style rules import, Gemini `~/.gemini/` skills) — state that the `SKILL.md` files are the open-standard source consumed by all of them.
@@ -409,7 +518,7 @@ Replace `README.md` with content covering, in this order:
 
 - [ ] **Step 2: Consistency pass**
 
-Read all eight `SKILL.md` files and verify: identical section ordering per the authoring contract; every `description` starts with "Use when"; every skill has a Red flags table and an Example link that resolves; no skill drifted into generic advice. Fix inconsistencies inline.
+Read all twelve `SKILL.md` files and verify: identical section ordering per the authoring contract; every `description` starts with "Use when"; every skill has a Red flags table and an Example link that resolves; no skill drifted into generic advice. Fix inconsistencies inline.
 
 - [ ] **Step 3: Verify example links resolve**
 
