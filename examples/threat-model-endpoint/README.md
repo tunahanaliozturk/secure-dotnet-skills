@@ -45,7 +45,7 @@ public class TransfersController : ControllerBase
 |---|---|---|---|---|---|
 | **Spoofing** | Attacker replays a stolen JWT or crafts a token signed by a different issuer to impersonate a legitimate user and initiate transfers on their behalf. | Medium × Critical = **Critical** | Strict JWT validation: issuer, audience, lifetime, and signing key must all be validated. Use Entra ID integration. | `AddMicrosoftIdentityWebApi(config.GetSection("AzureAd"))` with correct `Instance`, `TenantId`, `ClientId` in `appsettings.json`; `ValidateIssuer = true`, `ValidateAudience = true`, `ValidateLifetime = true`, `ValidateIssuerSigningKey = true` | **MISSING — `ValidateAudience` is currently `false` in `appsettings.json`** |
 | **Tampering** | Attacker submits a negative `amount` or a `fromAccountId` that belongs to another user, bypassing business-rule checks and diverting funds. | High × Critical = **Critical** | Model validation (non-negative amount, currency allowlist) and server-side ownership check on `fromAccountId` before executing the transfer. | `[Range(0.01, 1_000_000)]` on `Amount`; `[EnumDataType(typeof(Currency))]` on `Currency`; explicit `_db.Accounts.SingleAsync(a => a.Id == request.FromAccountId && a.OwnerId == currentUserId)` before debit | **MISSING — ownership predicate absent; amount validated but currency accepted as free-form string** |
-| **Repudiation** | User denies initiating a transfer; without an audit trail the institution cannot prove the request was made by that user from that session. | Low × High = **High** | Structured audit log entry per transfer: caller `sub`/`oid` claim, `fromAccountId`, `toAccountNumber`, `amount`, outcome, and W3C `traceparent`. Logs shipped to tamper-resistant Azure Monitor workspace. | `_logger.LogInformation("Transfer initiated by {UserId} from {FromAccount} amount {Amount} {Currency} traceId {TraceId}", userId, fromAccountId, amount, currency, HttpContext.TraceIdentifier)` + Log Analytics workspace with immutable archival | **PARTIAL — logging present but uses string interpolation (`$"..."`) rather than structured template; trace id not included** |
+| **Repudiation** | User denies initiating a transfer; without an audit trail the institution cannot prove the request was made by that user from that session. | Low × High = **High** | Structured audit log entry per transfer: caller identity from the `oid` claim, `fromAccountId`, `toAccountNumber`, `amount`, outcome, and W3C `traceparent`. Logs shipped to tamper-resistant Azure Monitor workspace. | `_logger.LogInformation("Transfer initiated by {UserId} from {FromAccount} amount {Amount} {Currency} traceId {TraceId}", userId, fromAccountId, amount, currency, HttpContext.TraceIdentifier)` where `userId = User.FindFirstValue("oid")` + Log Analytics workspace with immutable archival | **PARTIAL — logging present but uses string interpolation (`$"..."`) rather than structured template; trace id not included** |
 | **Information Disclosure** | The response body serializes the full `Transfer` EF entity, exposing internal fields: `ProcessingFee`, `InternalRailCode`, `FailureReason`, `IsDeleted`. Stack traces from unhandled exceptions appear in 500 responses in the test environment (which shares a config base with production). | Medium × High = **High** | Return a purpose-built `TransferDto`; configure `UseExceptionHandler` in production; `AddProblemDetails()` must not include `detail` or stack in non-development environments. | `return Ok(new TransferDto { TransferId = transfer.Id, Status = transfer.Status });`; `builder.Services.AddProblemDetails(); app.UseExceptionHandler();`; environment check guards `UseDeveloperExceptionPage()` | **MISSING — entity returned directly; `UseDeveloperExceptionPage()` is active when `ASPNETCORE_ENVIRONMENT != Production` including the shared test environment** |
 | **Denial of Service** | Attacker floods `POST /transfers` without authentication (401 path is cheap) or with valid tokens at high rate to exhaust database connections and the ACH rail's rate limits, causing service unavailability for legitimate users. | High × High = **High** | Fixed-window rate limiter per IP on the unauthenticated path; token-bucket limiter per `sub` claim on the authenticated path. Request body capped well below Kestrel default. | `builder.Services.AddRateLimiter(opts => { opts.AddFixedWindowLimiter("per-ip", o => { o.PermitLimit = 10; o.Window = TimeSpan.FromMinutes(1); }); opts.AddTokenBucketLimiter("per-user", o => { o.TokenLimit = 5; o.ReplenishmentPeriod = TimeSpan.FromSeconds(10); }); });` + `[RequestSizeLimit(8_192)]` on the action | **MISSING — no `AddRateLimiter` registered; default 30 MB body limit in effect** |
 | **Elevation of Privilege** | An authenticated but low-privilege user (customer support role) calls `POST /transfers` because the endpoint only requires `[Authorize]` (any valid token) rather than a specific scope or role, allowing them to initiate transfers they are not permitted to make. | Medium × Critical = **Critical** | Require the `Transfers.Write` delegated scope or the `FinanceUser` app role on the endpoint; register a named authorization policy. | `[Authorize(Policy = "CanInitiateTransfer")]` + `builder.Services.AddAuthorization(opts => opts.AddPolicy("CanInitiateTransfer", p => p.RequireClaim("scp", "Transfers.Write")));`; alternatively `[RequiredScope("Transfers.Write")]` from `Microsoft.Identity.Web` | **MISSING — bare `[Authorize]` only; any Entra ID user with a valid token can POST** |
@@ -75,11 +75,12 @@ public class TransfersController : ControllerBase
 [Authorize(Policy = "CanInitiateTransfer")]   // scope/role enforced
 [HttpPost]
 [RequestSizeLimit(8_192)]
+[EnableRateLimiting("per-user")]              // token-bucket per oid claim
 public async Task<IActionResult> Create(
     [FromBody] TransferRequest request,
     CancellationToken ct)
 {
-    var userId = User.FindFirstValue("oid")
+    var userId = User.FindFirstValue("oid")   // oid claim — consistent with audit log
         ?? throw new UnauthorizedAccessException();
 
     // Ownership check — IDOR prevention
@@ -117,6 +118,7 @@ builder.Services.AddAuthorization(opts =>
 
 builder.Services.AddRateLimiter(opts =>
 {
+    // Per-IP fixed window — guards the unauthenticated (401) path
     opts.AddFixedWindowLimiter("per-ip", o =>
     {
         o.PermitLimit = 10;
@@ -124,6 +126,21 @@ builder.Services.AddRateLimiter(opts =>
         o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
         o.QueueLimit = 0;
     });
+
+    // Per-user token bucket — keyed on the oid claim, applied to the authenticated transfer action
+    opts.AddPolicy("per-user", httpContext =>
+        RateLimitPartition.GetTokenBucketLimiter(
+            partitionKey: httpContext.User.FindFirstValue("oid") ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anon",
+            factory: _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 5,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+                TokensPerPeriod = 2,
+                AutoReplenishment = true,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+            }));
+
     opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
@@ -133,8 +150,12 @@ var app = builder.Build();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
-if (!app.Environment.IsProduction())
+if (app.Environment.IsDevelopment())
+{
     app.UseDeveloperExceptionPage();
+}
 else
+{
     app.UseExceptionHandler();
+}
 ```
