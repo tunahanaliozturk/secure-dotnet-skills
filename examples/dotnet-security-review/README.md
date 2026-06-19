@@ -86,8 +86,9 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> Search(string status)
     {
         // FIX 2a — prefer LINQ (compiled to parameterized SQL by EF Core):
+        var callerId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         var orders = await _db.Orders
-            .Where(o => o.Status == status && o.OwnerId == User.FindFirstValue(ClaimTypes.NameIdentifier))
+            .Where(o => o.Status == status && o.OwnerId == callerId)
             .Select(o => new OrderDto(o))
             .ToListAsync();
 
@@ -111,4 +112,4 @@ public class OrdersController : ControllerBase
 `FindAsync(id)` issues `SELECT … WHERE Id = @id` with no user filter. Replacing it with `FirstOrDefaultAsync(o => o.Id == id && o.OwnerId == callerId)` pushes the ownership assertion into the database query so no second round-trip is needed and there is no TOCTOU window. Returning `NotFound()` for both "row missing" and "row owned by someone else" prevents enumeration.
 
 **Fix 2 — SQL injection** (string interpolation → LINQ or `FromSqlInterpolated`):  
-`FromSqlRaw($"…'{status}'"`)` embeds the raw string into SQL before the database sees it. `FromSqlInterpolated($"… {status}")` uses `FormattableString` to extract each hole as a `DbParameter`, so the database always treats the value as data, never as SQL syntax. The LINQ version is preferable because EF Core compiles it to a fully parameterized query and it also applies the ownership filter.
+`FromSqlRaw($"…'{status}'")` embeds the raw string into SQL before the database sees it. `FromSqlInterpolated($"… {status}")` uses `FormattableString` to extract each hole as a `DbParameter`, so the database always treats the value as data, never as SQL syntax. The LINQ version is preferable because EF Core compiles it to a fully parameterized query and it also applies the ownership filter.
