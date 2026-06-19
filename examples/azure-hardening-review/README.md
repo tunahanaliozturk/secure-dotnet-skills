@@ -107,6 +107,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'             // ✅ TLS 1.2 minimum
     allowSharedKeyAccess: false             // ✅ forces Azure AD / managed-identity auth; SAS/account keys rejected
     supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Disabled'         // ✅ storage only reachable via private endpoint
     networkAcls: {
       defaultAction: 'Deny'                 // ✅ deny all by default
       bypass: 'AzureServices'
@@ -121,7 +122,7 @@ resource storageDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' 
   scope: storage
   properties: {
     workspaceId: logAnalyticsWorkspace.id
-    metrics: [{ category: 'Transaction'; enabled: true }]
+    metrics: [{ category: 'Transaction', enabled: true }]
     // Blob sub-resource diagnostics must be set separately on
     // Microsoft.Storage/storageAccounts/blobServices
   }
@@ -189,7 +190,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
   name: 'my-vault'
   location: resourceGroup().location
   properties: {
-    sku: { family: 'A'; name: 'standard' }
+    sku: { family: 'A', name: 'standard' }
     tenantId: subscription().tenantId
     enableRbacAuthorization: true           // ✅ RBAC model; access policies disabled
     enableSoftDelete: true
@@ -210,15 +211,16 @@ resource webAppDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' =
   properties: {
     workspaceId: logAnalyticsWorkspace.id
     logs: [
-      { category: 'AppServiceHTTPLogs';      enabled: true }
-      { category: 'AppServiceAuditLogs';     enabled: true }
-      { category: 'AppServiceConsoleLogs';   enabled: true }
+      { category: 'AppServiceHTTPLogs',      enabled: true }
+      { category: 'AppServiceAuditLogs',     enabled: true }
+      { category: 'AppServiceConsoleLogs',   enabled: true }
     ]
-    metrics: [{ category: 'AllMetrics'; enabled: true }]
+    metrics: [{ category: 'AllMetrics', enabled: true }]
   }
 }
 
 // Microsoft Defender for Cloud — Storage and App Service plans
+// NOTE: Microsoft.Security/pricings deploys at subscription scope — use a separate subscription-scoped module/deployment
 resource defenderStorage 'Microsoft.Security/pricings@2023-01-01' = {
   name: 'StorageAccounts'
   properties: { pricingTier: 'Standard' }  // ✅ includes malware scanning and anomaly detection
