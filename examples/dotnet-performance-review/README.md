@@ -23,16 +23,9 @@ public class ProductSummaryHandler
 
     public ProductSummaryResult Handle(int categoryId)
     {
-        // BUG 1 — sync-over-async: blocks a thread-pool thread waiting on the Task.
-        // In ASP.NET Core this does not deadlock (no single-threaded sync context),
-        // but it wastes a thread for the entire I/O duration and reduces throughput.
+        // BUG 3 (setup) — deferred IQueryable, enumerated twice below.
         IEnumerable<Product> products = _db.Products
-            .Where(p => p.CategoryId == categoryId)
-            .AsEnumerable()
-            .ToList()
-            .GetEnumerator()
-            // Simpler but identical anti-pattern:
-            as IEnumerable<Product>;
+            .Where(p => p.CategoryId == categoryId);   // NOT materialized — stays IQueryable<Product>
 
         // Realistic sync-over-async: a service that wraps async work
         var pricingUrl = _config["Pricing:BaseUrl"];
@@ -46,13 +39,13 @@ public class ProductSummaryHandler
         var prices = System.Text.Json.JsonSerializer.Deserialize<Dictionary<int, decimal>>(json,
             new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }); // BUG 3 note: new options each call
 
-        // BUG 3 — IEnumerable enumerated twice from the database query
-        // First enumeration: count
-        var count = products.Count();   // executes the query (or iterates the collection) once
+        // BUG 3 — deferred IQueryable enumerated twice: two separate SQL round-trips.
+        // First enumeration: fires SELECT COUNT(*) against the database
+        var count = products.Count();
 
-        // Second enumeration: project to summary
-        var items = products             // iterates again — if products were IQueryable<T>, this
-            .Select(p => new ProductSummaryItem(  // would fire a second round-trip to the DB
+        // Second enumeration: fires the full SELECT — a second DB round-trip
+        var items = products
+            .Select(p => new ProductSummaryItem(
                 p.Id,
                 p.Name,
                 prices.GetValueOrDefault(p.Id)))
@@ -71,7 +64,7 @@ public class ProductSummaryHandler
 |---|----------|--------|---------|----------------|
 | 1 | `client.GetStringAsync(...).Result` | **High** | Sync-over-async — `.Result` blocks a thread | Wastes a thread-pool thread for the full I/O round-trip. Under load this starves the thread pool and increases latency for all concurrent requests. Even without deadlock, throughput degrades linearly with blocking time. |
 | 2 | `new HttpClient()` inside `using` | **High** | Per-call `HttpClient` construction — socket exhaustion | Each `HttpClient` opens new TCP connections. The `using` disposes the client but the underlying socket lingers in `TIME_WAIT` (up to 4 minutes on most OS configs). Under moderate traffic, ephemeral ports are exhausted. Use `IHttpClientFactory`. |
-| 3 | `products.Count()` then `products.Select(…)` | **Medium** | Double enumeration of `IEnumerable<Product>` | If `products` is a deferred `IQueryable<T>`, each call fires a separate SQL query. Even as a materialized `List<T>`, iterating twice is wasteful and signals a misunderstanding of enumeration semantics. Materialize once and reuse. |
+| 3 | `products.Count()` then `products.Select(…)` | **Medium** | Double enumeration of a deferred `IQueryable<Product>` | Because `products` is a deferred `IQueryable<T>` (not yet materialized), `Count()` fires `SELECT COUNT(*)` and the subsequent `Select(...).ToList()` fires the full `SELECT` — two separate SQL round-trips for data that could be fetched in one. Materialize once with `ToListAsync()` and reuse the list. |
 | 4 | `new JsonSerializerOptions { … }` per call | **Medium** | Fresh `JsonSerializerOptions` on every call | `JsonSerializerOptions` caches reflection metadata internally. Constructing a new instance per call rebuilds that metadata each time — measurable overhead at high request rates. Use a `static readonly` instance or `IOptions<JsonSerializerOptions>`. |
 
 ---
@@ -98,6 +91,8 @@ public class ProductSummaryHandler
     }
 
     // FIX 1 — async all the way; no .Result or .Wait()
+    // CALLER NOTE: all call sites must be updated to `await HandleAsync(...)`;
+    //              do NOT reintroduce `.Result` or `.Wait()` at the call site.
     public async Task<ProductSummaryResult> HandleAsync(
         int categoryId,
         CancellationToken ct = default)
