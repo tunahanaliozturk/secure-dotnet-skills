@@ -1,6 +1,8 @@
 # Example: solid-review
 
-A worked review of a god `OrderService` that violates SRP, OCP, and DIP in concrete ways — followed by a refactor that splits responsibilities into focused, injected collaborators.
+A worked review of a god `OrderService` that violates SRP and DIP in concrete ways — followed by a refactor that splits responsibilities into focused, injected collaborators.
+
+> **Scope note:** This example deliberately targets the SRP and DIP violations present in this particular `OrderService`. OCP, LSP, and ISP did not apply to this class — a real reviewer applies whichever principles the code actually violates, not all five by rote.
 
 ---
 
@@ -67,7 +69,7 @@ public class OrderService
 
 | # | Smell | Violated principle | Why it matters |
 |---|-------|--------------------|----------------|
-| 1 | Validation, persistence, tax fetch, and email all live in one class | **SRP** | Four distinct reasons to change: business rules, storage schema, tax provider, email provider. Any of these forces a change to the same file. |
+| 1 | Validation, persistence, and email all live in one class | **SRP** | Three distinct reasons to change: business rules, storage schema, email provider. Any of these forces a change to the same file. |
 | 2 | `new HttpClient()` constructed inline | **DIP** | Bypasses `IHttpClientFactory` connection pooling (socket exhaustion under load), hides the dependency, and makes the class untestable without hitting the real tax API. |
 | 3 | `new System.Net.Mail.SmtpClient(...)` constructed inline | **DIP** | Same problem as `HttpClient`: hidden I/O dependency, untestable without a real mail server. |
 | 4 | `DateTime.Now` read directly inside the method | **DIP** | Non-deterministic under tests; `PlacedAt` will differ on every run, making assertions fragile without time-travel hacks. |
@@ -91,6 +93,12 @@ public interface IOrderValidator
 public interface ITaxClient
 {
     Task<decimal> GetRateAsync(string country, CancellationToken ct = default);
+}
+
+// IEmailSender.cs  — DIP: abstraction over the mail transport
+public interface IEmailSender
+{
+    Task SendAsync(string to, string subject, string body, CancellationToken ct = default);
 }
 
 // IOrderNotifier.cs  — SRP: owns notification dispatch only
@@ -126,7 +134,8 @@ public sealed class TaxClient : ITaxClient
     {
         var response = await _http.GetStringAsync(
             $"rate?country={Uri.EscapeDataString(country)}", ct);
-        return decimal.Parse(response);
+        return decimal.Parse(response, System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture);
     }
 }
 
@@ -185,7 +194,7 @@ public sealed class OrderService
         var order = new Order
         {
             CustomerId = request.CustomerId,
-            Items      = request.Items,
+            Items      = request.Items,  // simplified: prefer explicit DTO→entity mapping in production (see dotnet-security-review)
             TaxRate    = taxRate,
             PlacedAt   = _time.GetUtcNow().UtcDateTime,  // DIP: no more DateTime.Now
         };
@@ -226,6 +235,9 @@ Validation rules change independently of persistence and notification. Extractin
 
 **SRP — Extract `IOrderNotifier`:**
 Switching from SMTP to SendGrid, or adding an SMS fallback, no longer requires touching `OrderService`. The notifier owns that decision entirely.
+
+**SRP — Extract `ITaxClient`:**
+The tax-fetch responsibility (and its network I/O) moves to `TaxClient`, so changing the tax provider no longer touches `OrderService`.
 
 **DIP — `ITaxClient` via `IHttpClientFactory`:**
 `new HttpClient()` is replaced by a typed client registered with `AddHttpClient<ITaxClient, TaxClient>()`. The DI container manages the underlying `HttpClientHandler` lifecycle, preventing socket exhaustion. In tests, inject a mock `ITaxClient` — no network required.
