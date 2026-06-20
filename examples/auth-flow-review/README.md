@@ -123,19 +123,23 @@ builder.Services.AddAuthorization(options =>
         .RequireAuthenticatedUser()
         .Build();
 
-    // Delegated scope policy (user-interactive flows): token must contain
-    // scp claim with "Admin.Read". Use for human-facing admin clients.
+    // FIX 4 — delegated scope policy (user-interactive flows).
+    // Reads are delegated user calls via scp; RequireScope handles the
+    // space-delimited scp string correctly (e.g. "Admin.Read Admin.Write")
+    // where a bare RequireClaim("scp", "Admin.Read") would deny valid tokens.
     options.AddPolicy("AdminRead", policy =>
         policy
             .RequireAuthenticatedUser()
-            .RequireClaim("scp", "Admin.Read"));
+            .RequireScope("Admin.Read"));   // Microsoft.Identity.Web
 
-    // App-role policy (daemon / service-to-service flows): token must contain
-    // roles claim with "Admin.Write". Use for automated or service callers.
+    // FIX 5 — app-role policy (daemon / service-to-service flows).
+    // The destructive delete is restricted to a service principal app role via
+    // roles; RequireRole maps correctly to ClaimTypes.Role as wired by
+    // Microsoft.Identity.Web, whereas RequireClaim("roles","…") can fail closed.
     options.AddPolicy("AdminWrite", policy =>
         policy
             .RequireAuthenticatedUser()
-            .RequireClaim("roles", "Admin.Write"));
+            .RequireRole("Admin.Write"));
 });
 ```
 
@@ -151,15 +155,18 @@ public class AdminController : ControllerBase
 
     public AdminController(IUserService users) => _users = users;
 
-    // FIX 4 — named policy enforces the Admin.Read scope.
-    // Only tokens that carry scp=Admin.Read are admitted.
+    // FIX 4 — named policy enforces the Admin.Read scope via RequireScope.
+    // Reads are delegated user calls; RequireScope tokenizes the space-delimited
+    // scp claim so "Admin.Read Admin.Write" still satisfies an Admin.Read policy.
     [Authorize(Policy = "AdminRead")]
     [HttpGet("users")]
     public async Task<IActionResult> ListAllUsers() =>
         Ok(await _users.GetAllAsync());
 
-    // FIX 5 — named policy enforces the Admin.Write app role.
-    // Only service principals (or users) with the Admin.Write role are admitted.
+    // FIX 5 — named policy enforces the Admin.Write app role via RequireRole.
+    // The destructive delete is restricted to service principals carrying the
+    // Admin.Write app role; RequireRole maps to ClaimTypes.Role as wired by
+    // Microsoft.Identity.Web, ensuring daemon tokens are correctly admitted.
     [Authorize(Policy = "AdminWrite")]
     [HttpDelete("users/{id}")]
     public async Task<IActionResult> DeleteUser(Guid id)
@@ -183,5 +190,8 @@ Clock skew tolerance exists only to absorb small clock-sync differences between 
 **Fix 3 — `FallbackPolicy = RequireAuthenticatedUser`:**
 With a fallback policy, any endpoint that omits an explicit `[Authorize]` attribute is denied by the authorization middleware rather than served openly. Public routes (health checks, OIDC callback, anonymous status endpoints) opt out explicitly with `[AllowAnonymous]`, making anonymous access a deliberate and visible decision rather than a silent default.
 
-**Fix 4 & 5 — `[Authorize(Policy = "AdminRead")]` and `[Authorize(Policy = "AdminWrite")]`:**
-Named policies layer a claim requirement on top of authentication. `scp` is the standard delegated-permission claim issued in user-interactive flows (Authorization Code, On-Behalf-Of); `roles` is the standard app-role claim issued in client-credentials (daemon) flows. Using the correct claim for each flow prevents a low-privileged user token from satisfying a daemon-tier check, and vice versa.
+**Fix 4 — `[Authorize(Policy = "AdminRead")]` with `RequireScope("Admin.Read")`:**
+The `scp` claim in Entra ID tokens is a **space-delimited string** (e.g. `"Admin.Read Admin.Write"`). `RequireClaim("scp", "Admin.Read")` performs an exact-value match and would deny any token that carries more than one scope. `Microsoft.Identity.Web`'s `RequireScope("Admin.Read")` tokenizes the string and checks for the presence of the required scope, so valid tokens with multiple scopes are never rejected. Reads are delegated user-interactive calls (Authorization Code / On-Behalf-Of flows) — the caller is a human-facing admin client acting on behalf of a user.
+
+**Fix 5 — `[Authorize(Policy = "AdminWrite")]` with `RequireRole("Admin.Write")`:**
+The destructive delete is restricted to service principals (daemon callers, automated pipelines) that hold the `Admin.Write` app role — these arrive via client-credentials grant and carry a `roles` claim, not `scp`. Under `Microsoft.Identity.Web`, the `roles` claim is mapped to `ClaimTypes.Role`; using `RequireRole("Admin.Write")` respects that mapping, whereas `RequireClaim("roles", "Admin.Write")` bypasses it and can fail closed against valid tokens. This intentional split — delegated `scp` for reads, app-role `roles` for the destructive write — means human users can list data but only trusted service identities can delete it.
