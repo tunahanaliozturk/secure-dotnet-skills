@@ -29,7 +29,16 @@ Classification: **command** (mutates state, has side effects). One handler, neve
 
 ## Contracts
 
-### Request DTO
+### Wire DTO (request body)
+
+```csharp
+// API/Contracts/RedeemLicenseKeyRequest.cs
+public sealed record RedeemLicenseKeyRequest(string LicenseKey);
+```
+
+This record is intentionally **narrower** than the command: `UserId` is taken from the authenticated claims and `IdempotencyKey` from the `Idempotency-Key` request header — neither is read from the body, preventing elevation-of-privilege.
+
+### Command DTO
 
 ```csharp
 // Application/Features/Licenses/RedeemLicenseKeyCommand.cs
@@ -50,8 +59,6 @@ public sealed record RedeemLicenseKeyResponse(
 );
 ```
 
-`UserId` is populated by the endpoint from `HttpContext.User` — it is never read from the request body to prevent elevation of privilege.
-
 ### Domain event
 
 ```csharp
@@ -62,7 +69,7 @@ public sealed record LicenseKeyRedeemedEvent(
 ) : IDomainEvent;
 ```
 
-Raised inside the aggregate after redemption; dispatched by a MediatR `INotificationHandler` to trigger the confirmation email asynchronously, keeping the handler's transaction boundary tight.
+Raised inside the aggregate after redemption; dispatched by a MediatR `INotificationHandler` to trigger the confirmation email in a separate notification handler, keeping the handler's transaction boundary tight. Durable async delivery (outbox pattern or a message queue) is the recommended production follow-up.
 
 ---
 
@@ -100,9 +107,11 @@ public sealed class RedeemLicenseKeyValidator
 |--------------|---------------|--------------------|-----------|-----------------------|
 | Key not found | Expected domain outcome | `LicenseKey.NotFound` | 404 | `.../errors/license-key/not-found` |
 | Key already redeemed | Expected domain outcome | `LicenseKey.AlreadyRedeemed` | 409 | `.../errors/license-key/already-redeemed` |
-| Key expired | Expected domain outcome | `LicenseKey.Expired` | 422 | `.../errors/license-key/expired` |
+| Key expired | Expected domain outcome | `LicenseKey.Expired` | 409 | `.../errors/license-key/expired` |
 | Input validation failure | Input sanitization | `General.Validation` | 422 | `.../errors/validation` |
 | Unhandled DB failure | Exceptional | (uncaught exception) | 500 | (handled by `UseExceptionHandler`) |
+
+> **Why 409 for both AlreadyRedeemed and Expired?** Both represent a state-transition conflict — the key exists but its current state prevents redemption. 409 (Conflict) communicates this consistently; 422 is reserved for malformed input that fails validation before any state check.
 
 ```csharp
 // Application/Shared/Result.cs (simplified)
@@ -126,6 +135,32 @@ public sealed record Error(string Code, string Description)
 
 ---
 
+## Domain model: optimistic concurrency
+
+`LicenseKey` carries a `RowVersion` token so EF Core enforces optimistic concurrency at the database level:
+
+```csharp
+// Domain/LicenseKey.cs (excerpt)
+public sealed class LicenseKey
+{
+    // ... other properties ...
+
+    [Timestamp]
+    public byte[] RowVersion { get; private set; } = [];
+}
+```
+
+```csharp
+// Infrastructure/AppDbContext.cs (OnModelCreating excerpt)
+modelBuilder.Entity<LicenseKey>()
+    .Property(e => e.RowVersion)
+    .IsRowVersion();
+```
+
+When two concurrent requests load the same `LicenseKey` row and both attempt `SaveChangesAsync`, the second committer's `WHERE RowVersion = <original>` predicate matches zero rows and EF Core throws `DbUpdateConcurrencyException`. The handler catches this and maps it to `LicenseKey.AlreadyRedeemed` (409). This approach is provider-agnostic and works with SQLite (for unit/integration tests) and Postgres (Testcontainers or production).
+
+---
+
 ## Handler skeleton
 
 ```csharp
@@ -133,35 +168,31 @@ public sealed record Error(string Code, string Description)
 internal sealed class RedeemLicenseKeyHandler
     : IRequestHandler<RedeemLicenseKeyCommand, Result<RedeemLicenseKeyResponse>>
 {
-    private readonly AppDbContext       _db;
-    private readonly IIdempotencyStore  _idempotency;
-    private readonly IPublisher         _publisher;   // MediatR — dispatches domain events
+    private readonly AppDbContext  _db;
+    private readonly IPublisher    _publisher;   // MediatR — dispatches domain events
 
-    public RedeemLicenseKeyHandler(
-        AppDbContext      db,
-        IIdempotencyStore idempotency,
-        IPublisher        publisher)
+    public RedeemLicenseKeyHandler(AppDbContext db, IPublisher publisher)
     {
-        _db          = db;
-        _idempotency = idempotency;
-        _publisher   = publisher;
+        _db        = db;
+        _publisher = publisher;
     }
 
     public async Task<Result<RedeemLicenseKeyResponse>> Handle(
         RedeemLicenseKeyCommand request,
         CancellationToken       cancellationToken)
     {
-        // 1. Idempotency check (before touching the domain).
-        var cached = await _idempotency.GetAsync<RedeemLicenseKeyResponse>(
-            request.UserId, request.IdempotencyKey, cancellationToken);
-        if (cached is not null)
-            return Result<RedeemLicenseKeyResponse>.Success(cached);
+        // 1. Idempotency check — return early if this (userId, idempotencyKey) was already processed.
+        var existing = await _db.IdempotencyRecords
+            .FirstOrDefaultAsync(
+                r => r.UserId == request.UserId && r.IdempotencyKey == request.IdempotencyKey,
+                cancellationToken);
+        if (existing is not null)
+            return Result<RedeemLicenseKeyResponse>.Success(
+                JsonSerializer.Deserialize<RedeemLicenseKeyResponse>(existing.ResponseJson)!);
 
-        // 2. Load aggregate — single query, pessimistic lock to prevent race.
+        // 2. Load aggregate — standard LINQ query; concurrency is handled by the RowVersion token.
         var key = await _db.LicenseKeys
-            .FromSqlInterpolated(
-                $"SELECT * FROM \"LicenseKeys\" WHERE \"Key\" = {request.LicenseKey} FOR UPDATE")
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(k => k.Key == request.LicenseKey, cancellationToken);
 
         if (key is null)
             return Result<RedeemLicenseKeyResponse>.Failure(
@@ -172,25 +203,41 @@ internal sealed class RedeemLicenseKeyHandler
         if (!redeemResult.IsSuccess)
             return Result<RedeemLicenseKeyResponse>.Failure(redeemResult.Error);
 
-        // 4. Create subscription (same EF transaction).
+        // 4. Create subscription and idempotency record in the same unit of work.
         var subscription = Subscription.Create(request.UserId, key.Plan, key.DurationDays);
         _db.Subscriptions.Add(subscription);
-
-        // 5. Single SaveChangesAsync — one transaction boundary.
-        await _db.SaveChangesAsync(cancellationToken);
-
-        // 6. Dispatch domain event (email sent in a separate handler, after commit).
-        await _publisher.Publish(
-            new LicenseKeyRedeemedEvent(key.Id, request.UserId, DateTimeOffset.UtcNow),
-            cancellationToken);
 
         var response = new RedeemLicenseKeyResponse(
             subscription.Id, key.Plan, subscription.ExpiresAt);
 
-        // 7. Persist idempotency record so duplicate requests get the same response.
-        await _idempotency.SetAsync(
-            request.UserId, request.IdempotencyKey, response,
-            TimeSpan.FromHours(24), cancellationToken);
+        _db.IdempotencyRecords.Add(new IdempotencyRecord
+        {
+            UserId         = request.UserId,
+            IdempotencyKey = request.IdempotencyKey,
+            ResponseJson   = JsonSerializer.Serialize(response),
+            CreatedAt      = DateTimeOffset.UtcNow
+        });
+
+        // 5. Single SaveChangesAsync — one transaction boundary for subscription + idempotency record.
+        //    If a concurrent request already redeemed this key, EF Core detects the RowVersion
+        //    mismatch and throws DbUpdateConcurrencyException.
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // The RowVersion token caught a concurrent redemption — treat it as already redeemed.
+            return Result<RedeemLicenseKeyResponse>.Failure(
+                Error.Conflict("LicenseKey.AlreadyRedeemed", "The license key has already been redeemed."));
+        }
+
+        // 6. Dispatch domain event — handled in a separate MediatR INotificationHandler.
+        //    Note: this executes synchronously within the same request. For guaranteed async/durable
+        //    delivery, replace with an outbox pattern or message queue in production.
+        await _publisher.Publish(
+            new LicenseKeyRedeemedEvent(key.Id, request.UserId, DateTimeOffset.UtcNow),
+            cancellationToken);
 
         return Result<RedeemLicenseKeyResponse>.Success(response);
     }
@@ -199,8 +246,8 @@ internal sealed class RedeemLicenseKeyHandler
 
 Key points:
 - No business logic in the controller or the validator.
-- One `SaveChangesAsync()` at step 5; domain event fires after commit.
-- The `FOR UPDATE` lock prevents two concurrent requests from redeeming the same key simultaneously; `key.Redeem(...)` also enforces the invariant inside the aggregate so the domain is correct even without the DB lock.
+- One `SaveChangesAsync()` at step 5 commits the subscription **and** the idempotency record atomically — a crash between them cannot cause a duplicate subscription on retry.
+- Optimistic concurrency via `RowVersion` ensures the second concurrent committer gets a `DbUpdateConcurrencyException`, which is caught and mapped to a 409 response. The domain aggregate also enforces the invariant internally for defense-in-depth.
 
 ---
 
@@ -237,6 +284,7 @@ app.MapPost("/licenses/redeem", async (
 | Scope | `(userId, idempotencyKey)` — a key is scoped per user to prevent cross-user collision |
 | Storage | `IdempotencyRecord` table in the same `AppDbContext`; columns: `UserId`, `IdempotencyKey`, `ResponseJson`, `CreatedAt` |
 | TTL | 24 hours — purged by a nightly background job (`IHostedService`) |
+| Durability | The `IdempotencyRecord` insert is part of the **same `SaveChangesAsync`** as the `Subscription`, so a crash cannot leave the subscription committed without the idempotency record |
 | Race condition | Unique constraint on `(UserId, IdempotencyKey)` in the DB; `DbUpdateException` on duplicate insert is caught and treated as "already processed — return stored response" |
 | Missing header | Validator rejects the request (HTTP 422) before the handler runs |
 
@@ -254,7 +302,7 @@ builder.Services.AddScoped(typeof(IPipelineBehavior<,>), typeof(ValidationBehavi
 builder.Services.AddScoped(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
 
 builder.Services.AddScoped<IIdempotencyStore, EfIdempotencyStore>();
-builder.Services.AddTransient<IEmailSender, SendGridEmailSender>();
+builder.Services.AddScoped<IEmailSender, SendGridEmailSender>();
 
 builder.Services.AddProblemDetails();
 app.UseExceptionHandler();
@@ -268,11 +316,11 @@ In tests, `SendGridEmailSender` is replaced with `FakeEmailSender : IEmailSender
 
 | # | Slice | What to build |
 |---|-------|---------------|
-| 1 | Domain | `LicenseKey` aggregate with `Redeem(userId, now)` method that enforces "not already redeemed" and "not expired"; `LicenseKeyRedeemedEvent`; `Subscription.Create(...)` factory |
-| 2 | Application contracts | `RedeemLicenseKeyCommand`, `RedeemLicenseKeyResponse`, `IIdempotencyStore` interface |
+| 1 | Domain | `LicenseKey` aggregate with `Redeem(userId, now)` method that enforces "not already redeemed" and "not expired"; `RowVersion` token on `LicenseKey`; `LicenseKeyRedeemedEvent`; `Subscription.Create(...)` factory |
+| 2 | Application contracts | `RedeemLicenseKeyCommand`, `RedeemLicenseKeyResponse`, `RedeemLicenseKeyRequest` (wire DTO) |
 | 3 | Validation | `RedeemLicenseKeyValidator`; unit-test all rules (empty key, bad format, missing idempotency key) |
-| 4 | Handler | `RedeemLicenseKeyHandler`; integration test against an in-memory Sqlite or Testcontainers Postgres: happy path, not-found, already-redeemed, idempotent duplicate |
-| 5 | Infrastructure | `AppDbContext` migrations (`LicenseKeys`, `Subscriptions`, `IdempotencyRecords`); `EfIdempotencyStore`; `SendGridEmailSender` behind feature flag |
+| 4 | Handler | `RedeemLicenseKeyHandler`; integration test against an in-memory SQLite or Testcontainers Postgres: happy path, not-found, already-redeemed, idempotent duplicate |
+| 5 | Infrastructure | `AppDbContext` migrations (`LicenseKeys` with `RowVersion`, `Subscriptions`, `IdempotencyRecords`); `EfIdempotencyStore`; `SendGridEmailSender` behind feature flag |
 | 6 | API endpoint | Minimal-API route; `ResultExtensions.ToProblemDetails()`; `Error.ToProblemDetails()` mapping table |
-| 7 | Tests: idempotency | Send the same `Idempotency-Key` twice; assert second response is identical; assert DB has one `Subscription` row |
+| 7 | Tests: idempotency | Send the same `Idempotency-Key` twice; assert second response is identical; assert DB has one `Subscription` row and one `IdempotencyRecord` row |
 | 8 | Tests: concurrency | Two parallel requests with the same key — assert exactly one succeeds (409 for the loser); assert one `Subscription` row |
