@@ -38,7 +38,7 @@ Directs the agent to audit the full authentication and authorization surface of 
 ## Red flags
 
 | Signal | Why it matters |
-|---|---|
+|--------|----------------|
 | `ValidateAudience = false` in `TokenValidationParameters` | Any JWT issued by the same authority for any application is accepted — including tokens issued to other relying parties in the same tenant. A compromised client app's tokens become valid here. |
 | `ValidateIssuerSigningKey = false` | The middleware no longer verifies the token's signature. Any syntactically valid JWT, including attacker-crafted ones with arbitrary claims, is accepted as authentic. |
 | `RequireHttpsMetadata = false` in a non-development environment | The OIDC metadata endpoint (and the JWKS endpoint it references) is fetched over HTTP. An attacker who can intercept that response can substitute their own signing keys and issue tokens the app accepts. |

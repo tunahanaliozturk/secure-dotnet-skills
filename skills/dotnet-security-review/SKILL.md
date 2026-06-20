@@ -39,7 +39,7 @@ Directs the agent to perform a lens-by-lens security review of an ASP.NET Core s
 ## Red flags
 
 | Signal | Why it matters |
-|---|---|
+|--------|----------------|
 | `context.Orders.FromSqlRaw($"… WHERE Id = {id}")` | String-interpolated raw SQL is directly injectable; the `{id}` hole receives un-parameterized user input. |
 | `AllowAnyOrigin().AllowCredentials()` | Violates the CORS spec and can expose authenticated responses to attacker-controlled origins depending on browser / middleware version. |
 | `BinaryFormatter` in any serialization path | Enables unauthenticated remote code execution via deserialization gadget chains; .NET itself marks the type obsolete-as-error since .NET 9. |
