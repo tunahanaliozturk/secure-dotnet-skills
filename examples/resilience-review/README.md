@@ -87,6 +87,9 @@ builder.Services.AddHttpClient<IPaymentGatewayClient, PaymentGatewayClient>(clie
     // TotalRequestTimeout is the primary deadline.
     client.Timeout = TimeSpan.FromSeconds(30);
 })
+// Note: AddResilienceHandler is used instead of AddStandardResilienceHandler()
+// so that resilience is scoped only to the idempotent GET path; the non-idempotent
+// payment POST receives no retry pipeline, preventing duplicate charges.
 .AddResilienceHandler("payment-status-get", pipelineBuilder =>
 {
     // Strategy order: outermost executes first.
@@ -103,14 +106,16 @@ builder.Services.AddHttpClient<IPaymentGatewayClient, PaymentGatewayClient>(clie
         MaxRetryAttempts = 3,
         BackoffType = DelayBackoffType.Exponential,
         UseJitter = true,
-        // Retry on transient faults only; honor 429 Retry-After.
+        // Retry on transient faults only; 429 is included here so the
+        // OnRetry delegate below can honor its Retry-After delay.
         ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
             .Handle<HttpRequestException>()
             .HandleResult(r =>
                 r.StatusCode is HttpStatusCode.ServiceUnavailable  // 503
                     or HttpStatusCode.GatewayTimeout               // 504
                     or HttpStatusCode.InternalServerError          // 500
-                    or HttpStatusCode.RequestTimeout),             // 408
+                    or HttpStatusCode.RequestTimeout               // 408
+                    or HttpStatusCode.TooManyRequests),            // 429 — delay honored in OnRetry
         OnRetry = args =>
         {
             // Honor Retry-After on 429 Too Many Requests.
@@ -251,7 +256,7 @@ The resilience pipeline has two timeout layers: a 10-second total timeout wrappi
 `HttpContext.RequestAborted` cancels when the HTTP client disconnects. Forwarding that token to `GetAsync` ensures the downstream call is cancelled immediately rather than running to completion and discarding the result. Under a 503 storm this prevents orphaned connections from accumulating.
 
 **Fix 4 — `AddResilienceHandler` with retry, circuit breaker, and 429 handling:**
-The `payment-status-get` pipeline retries transient faults (5xx, 408, `HttpRequestException`) with exponential backoff and jitter, preventing thundering herd. The circuit breaker opens after a 50% failure rate in any 30-second window, stopping retry pressure against a downed gateway and allowing it to recover. `429` responses are retried after the `Retry-After` delay rather than counted as general failures.
+The `payment-status-get` pipeline retries transient faults (503, 504, 500, 408, `HttpRequestException`, and 429) with exponential backoff and jitter, preventing thundering herd. `429 TooManyRequests` is included in the `ShouldHandle` predicate so the `OnRetry` delegate can substitute the server-supplied `Retry-After` duration as the actual retry delay. The circuit breaker opens after a 50% failure rate in any 30-second window, stopping retry pressure against a downed gateway and allowing it to recover.
 
 **Fix 5 — cached fallback on the read path; no retry on the write path:**
 The last-known-good `PaymentStatus` is stored in `IMemoryCache` with a 5-minute TTL. When the circuit breaker is open or all retries are exhausted, the cached value is returned instead of a 500. For `CreatePayment`, no retry is applied — the caller must provide an `X-Idempotency-Key` and the server must deduplicate before retry is safe on the write path.
