@@ -36,7 +36,9 @@ public record SearchRequest(string Query, int MaxResults = 20);
 
 ---
 
-## AFTER — token-bucket limiter partitioned by API key, 429 + Retry-After, RequireRateLimiting
+## AFTER — token-bucket limiter (global policy): 429 + Retry-After + RequireRateLimiting
+
+This first variant uses the **global** `AddTokenBucketLimiter` helper (one shared bucket for all callers of the policy) to keep the wiring simple. The **per-API-key partitioned** variant — what you want for a multi-tenant API — follows below.
 
 ```csharp
 // Program.cs
@@ -69,9 +71,11 @@ builder.Services.AddRateLimiter(options =>
     // 2. Always return 429, never 503.
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // 3. Add Retry-After so clients back off correctly.
+    // 3. Add Retry-After so clients back off correctly. The 429 status is already
+    //    applied by RejectionStatusCode above — OnRejected only adds the header + body.
     options.OnRejected = async (context, cancellationToken) =>
     {
+        // IHeaderDictionary.RetryAfter typed indexer is ASP.NET Core 8+.
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
         {
             context.HttpContext.Response.Headers.RetryAfter =
@@ -83,7 +87,6 @@ builder.Services.AddRateLimiter(options =>
             context.HttpContext.Response.Headers.RetryAfter = "10";
         }
 
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await context.HttpContext.Response.WriteAsync(
             "Rate limit exceeded. Please retry after the Retry-After interval.",
             cancellationToken);
@@ -100,6 +103,8 @@ app.MapPost("/search", async (SearchRequest req, SearchService svc) =>
     return Results.Ok(results);
 }).RequireRateLimiting("search-policy");
 
+// Minimal-API endpoints use .WithMetadata(new DisableRateLimitingAttribute()) because
+// the [DisableRateLimiting] attribute can't decorate a lambda — the two forms are equivalent.
 app.MapGet("/health", () => Results.Ok()).WithMetadata(new DisableRateLimitingAttribute());
 
 app.Run();
@@ -139,12 +144,12 @@ builder.Services.AddRateLimiter(options =>
 
     options.OnRejected = async (context, cancellationToken) =>
     {
+        // 429 is already applied by RejectionStatusCode; just add Retry-After + body.
         context.HttpContext.Response.Headers.RetryAfter =
             context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
                 ? ((int)retryAfter.TotalSeconds).ToString()
                 : "10";
 
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await context.HttpContext.Response.WriteAsync(
             "Rate limit exceeded.", cancellationToken);
     };
