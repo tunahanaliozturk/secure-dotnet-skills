@@ -103,8 +103,10 @@ public class OrdersController : ControllerBase
     {
         // Step 1: Model validation — ASP.NET Core runs [Required] / [Range] automatically.
         // If ModelState is invalid, return 422 + ValidationProblemDetails (RFC 7807).
+        // Note: [ApiController] automatic 400 is suppressed via SuppressModelStateInvalidFilter = true
+        // (see Program.cs); this explicit check is what actually returns 422.
         if (!ModelState.IsValid)
-            return ValidationProblem(ModelState);   // 422 Unprocessable Entity
+            return ValidationProblem(statusCode: StatusCodes.Status422UnprocessableEntity); // 422 Unprocessable Entity
                                                     // Content-Type: application/problem+json
                                                     // Body: ValidationProblemDetails { errors: { "Quantity": ["..."] } }
 
@@ -174,6 +176,10 @@ public class OrdersController : ControllerBase
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// Suppress [ApiController]'s automatic 400 response so the controller's explicit
+// ValidationProblem(statusCode: 422) call is reached and actually returns 422.
+builder.Services.Configure<ApiBehaviorOptions>(o => o.SuppressModelStateInvalidFilter = true);
 
 // RFC 7807 ProblemDetails for unhandled errors (404, 405, 500, etc.)
 builder.Services.AddProblemDetails();
