@@ -53,3 +53,8 @@ Directs the agent to audit the full authentication and authorization surface of 
 ## Example
 
 See [`examples/auth-flow-review/`](../../examples/auth-flow-review/).
+
+## Related skills
+
+- [dotnet-security-review](../dotnet-security-review/SKILL.md) — use for a full security review covering injection, crypto, deserialization, and secrets beyond auth.
+- [api-contract-review](../api-contract-review/SKILL.md) — use to review endpoint contracts including authorization requirements and error responses.

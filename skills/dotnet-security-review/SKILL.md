@@ -54,3 +54,9 @@ Directs the agent to perform a lens-by-lens security review of an ASP.NET Core s
 ## Example
 
 See [`examples/dotnet-security-review/`](../../examples/dotnet-security-review/).
+
+## Related skills
+
+- [secrets-config-audit](../secrets-config-audit/SKILL.md) — use for deeper focus on secret handling, Key Vault wiring, and config-layer assignment.
+- [threat-model-endpoint](../threat-model-endpoint/SKILL.md) — use to enumerate per-endpoint STRIDE threats and mitigations before or after a security review.
+- [auth-flow-review](../auth-flow-review/SKILL.md) — use for deeper authn/z review covering token validation, policies, and cookie hygiene.

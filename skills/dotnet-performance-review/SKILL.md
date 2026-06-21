@@ -56,3 +56,8 @@ Directs the agent to walk .NET / ASP.NET Core code through concrete performance 
 ## Example
 
 See [`examples/dotnet-performance-review/`](../../examples/dotnet-performance-review/).
+
+## Related skills
+
+- [ef-core-review](../ef-core-review/SKILL.md) — use for deep EF Core query performance (N+1, tracking, projections).
+- [resilience-review](../resilience-review/SKILL.md) — use to review timeouts and retry policies on downstream calls that affect throughput.

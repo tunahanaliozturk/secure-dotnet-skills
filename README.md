@@ -1,44 +1,61 @@
 # Secure .NET on Azure Skills — Aegis
 
-Twelve judgment skills that keep a coding agent sharp on **production-grade, secure .NET on Azure** work. Not a shallow checklist and not a rigid script — each skill guides the agent through a concrete, ASP.NET Core / Azure–specific review lens spanning security, design, performance, concurrency, and observability, naming real types, attributes, APIs, and configuration keys so every finding comes with a precise, actionable fix.
+![CI](https://github.com/tunahanaliozturk/secure-dotnet-skills/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+
+Sixteen judgment skills that keep a coding agent sharp on **production-grade, secure .NET on Azure** work. Not a shallow checklist and not a rigid script — each skill guides the agent through a concrete, ASP.NET Core / Azure–specific review lens spanning security, design, performance, concurrency, and observability, naming real types, attributes, APIs, and configuration keys so every finding comes with a precise, actionable fix.
 
 ## Why
 
 Most "security checklists" stop at "validate input" and "use strong crypto." They are language-agnostic, surface-level, and do nothing to sharpen an agent's judgment about the .NET ecosystem — `IPasswordHasher<T>` vs `MD5`, `FromSqlInterpolated` vs `FromSqlRaw`, `DefaultAzureCredential` vs a committed `ClientSecret`. These skills fill that gap: each one was reviewed for .NET / Azure specificity and ships a worked example that shows the before (the real problem pattern) and the after (the precise fix).
 
+## Where the skills apply
+
+```mermaid
+flowchart LR
+    A[Design & contracts] --> B[Security & secrets]
+    B --> C[Performance, concurrency & resilience]
+    C --> D[Delivery & ops]
+```
+
 ## Skills
 
 ### Security & secrets
 
-| Skill | Use when… |
-|-------|-----------|
-| [dotnet-security-review](skills/dotnet-security-review/SKILL.md) | Reviewing a .NET / ASP.NET Core service, pull request, or diff for security issues — authorization gaps, injection, insecure crypto, secret leakage, unsafe deserialization — before merge or deploy. |
-| [threat-model-endpoint](skills/threat-model-endpoint/SKILL.md) | Threat-modeling an API endpoint, feature, or data flow in an ASP.NET Core app — to enumerate STRIDE threats and concrete mitigations before building or shipping. |
-| [secrets-config-audit](skills/secrets-config-audit/SKILL.md) | Auditing a .NET app for secret handling and configuration safety — hardcoded secrets, secrets in source or appsettings, Azure Key Vault wiring, and managed-identity usage. |
-| [azure-hardening-review](skills/azure-hardening-review/SKILL.md) | Reviewing Azure infrastructure (Bicep, Terraform, ARM, or App Service / Container Apps config) for hardening — least-privilege identity, network exposure, Key Vault, encryption, and TLS. |
-| [auth-flow-review](skills/auth-flow-review/SKILL.md) | Reviewing authentication and authorization in an ASP.NET Core app — JWT / OIDC / Entra ID configuration, token validation, and scope/role enforcement. |
-| [dependency-supplychain-check](skills/dependency-supplychain-check/SKILL.md) | Reviewing a .NET project's NuGet dependencies for known vulnerabilities, abandoned packages, supply-chain hygiene, and version pinning hygiene — before merging a dependency change or during a periodic security audit. |
+| Skill | Use when |
+|-------|----------|
+| [dotnet-security-review](skills/dotnet-security-review/SKILL.md) | Use when reviewing a .NET / ASP.NET Core service, pull request, or diff for security issues — authorization gaps, injection, insecure crypto, secret leakage, unsafe deserialization — before merge or deploy. |
+| [threat-model-endpoint](skills/threat-model-endpoint/SKILL.md) | Use when threat-modeling an API endpoint, feature, or data flow in an ASP.NET Core app — to enumerate STRIDE threats and concrete mitigations before building or shipping. |
+| [secrets-config-audit](skills/secrets-config-audit/SKILL.md) | Use when auditing a .NET app for secret handling and configuration safety — hardcoded secrets, secrets in source or appsettings, Azure Key Vault wiring, and managed-identity usage. |
+| [auth-flow-review](skills/auth-flow-review/SKILL.md) | Use when reviewing authentication and authorization in an ASP.NET Core app — JWT / OIDC / Entra ID configuration, token validation, and scope/role enforcement. |
+| [dependency-supplychain-check](skills/dependency-supplychain-check/SKILL.md) | Use when reviewing a .NET project's NuGet dependencies for known vulnerabilities, abandoned packages, supply-chain hygiene, and version pinning hygiene — before merging a dependency change or during a periodic security audit. |
+| [rate-limiting-review](skills/rate-limiting-review/SKILL.md) | Use when reviewing rate limiting and overload protection in an ASP.NET Core app — limiter algorithm, partitioning, 429 semantics, and where limiting belongs — to protect against abuse and overload. |
 
-### Design
+### Design & contracts
 
-| Skill | Use when… |
-|-------|-----------|
-| [design-dotnet-feature](skills/design-dotnet-feature/SKILL.md) | Designing a new backend feature in a .NET app — to shape boundaries, layering (Clean Architecture / CQRS), validation, and error handling before writing code. |
-| [solid-review](skills/solid-review/SKILL.md) | Reviewing C# / .NET code for SOLID design adherence — single responsibility, open/closed, Liskov, interface segregation, dependency inversion — to surface coupling and concrete refactor opportunities. |
+| Skill | Use when |
+|-------|----------|
+| [design-dotnet-feature](skills/design-dotnet-feature/SKILL.md) | Use when designing a new backend feature in a .NET app — to shape boundaries, layering (Clean Architecture / CQRS), validation, and error handling before writing code. |
+| [solid-review](skills/solid-review/SKILL.md) | Use when reviewing C# / .NET code for SOLID design adherence — single responsibility, open/closed, Liskov, interface segregation, dependency inversion — to surface coupling and concrete refactor opportunities. |
+| [api-contract-review](skills/api-contract-review/SKILL.md) | Use when reviewing the design of a REST/HTTP API in ASP.NET Core — resource modeling, status codes, error shape, idempotency, versioning, pagination, and OpenAPI accuracy — before it ships. |
 
-### Performance & concurrency
+### Performance, concurrency & resilience
 
-| Skill | Use when… |
-|-------|-----------|
-| [dotnet-performance-review](skills/dotnet-performance-review/SKILL.md) | Reviewing .NET code for performance — allocations and GC pressure, async/IO misuse, hot-path LINQ, repeated enumeration, string handling, caching, and serialization. |
-| [async-concurrency-review](skills/async-concurrency-review/SKILL.md) | Reviewing asynchronous and concurrent .NET code — async/await correctness, deadlocks, cancellation propagation, and thread safety of shared state. |
-| [ef-core-review](skills/ef-core-review/SKILL.md) | Reviewing Entity Framework Core usage — for performance (N+1, tracking, projections), correctness (transactions, concurrency), and security (raw-SQL injection, migrations). |
+| Skill | Use when |
+|-------|----------|
+| [dotnet-performance-review](skills/dotnet-performance-review/SKILL.md) | Use when reviewing .NET code for performance — allocations and GC pressure, async/IO misuse, hot-path LINQ, repeated enumeration, string handling, caching, and serialization. |
+| [async-concurrency-review](skills/async-concurrency-review/SKILL.md) | Use when reviewing asynchronous and concurrent .NET code — async/await correctness, deadlocks, cancellation propagation, and thread safety of shared state. |
+| [ef-core-review](skills/ef-core-review/SKILL.md) | Use when reviewing Entity Framework Core usage — for performance (N+1, tracking, projections), correctness (transactions, concurrency), and security (raw-SQL injection, migrations). |
+| [resilience-review](skills/resilience-review/SKILL.md) | Use when reviewing how a .NET service handles transient faults and downstream failures — timeouts, retries, circuit breakers, bulkheads, and fallback — for calls to databases, queues, and HTTP dependencies. |
 
-### Observability
+### Delivery & ops
 
-| Skill | Use when… |
-|-------|-----------|
-| [observability-review](skills/observability-review/SKILL.md) | Reviewing logging, tracing, and metrics in a .NET app — structured logging, OpenTelemetry, correlation, and avoiding PII / secret leakage in telemetry. |
+| Skill | Use when |
+|-------|----------|
+| [azure-hardening-review](skills/azure-hardening-review/SKILL.md) | Use when reviewing Azure infrastructure (Bicep, Terraform, ARM, or App Service / Container Apps config) for hardening — least-privilege identity, network exposure, Key Vault, encryption, and TLS. |
+| [container-deployment-review](skills/container-deployment-review/SKILL.md) | Use when reviewing how a .NET app is containerized and deployed — Dockerfile, base image, runtime user, configuration, health probes, resources, and secrets — before it runs in Kubernetes or Azure Container Apps. |
+| [observability-review](skills/observability-review/SKILL.md) | Use when reviewing logging, tracing, and metrics in a .NET app — structured logging, OpenTelemetry, correlation, and avoiding PII / secret leakage in telemetry. |
 
 ## Install
 
@@ -85,7 +102,7 @@ The `SKILL.md` files are the open-standard source: they are plain markdown with 
 ## Philosophy
 
 - **Judgment-preserving.** Each skill guides how to think, not what to conclude. Steps are numbered process, not rigid scripts. The agent retains discretion on severity, context, and trade-offs.
-- **Composable.** Install only what your project needs. A library project needs `dotnet-security-review` and `solid-review`; a greenfield Azure service benefits from all twelve. Skills do not depend on each other.
+- **Composable.** Install only what your project needs. A library project needs `dotnet-security-review` and `solid-review`; a greenfield Azure service benefits from all sixteen. Skills do not depend on each other.
 - **Depth over breadth.** Every check names a concrete .NET type, attribute, or configuration key. Generic advice is a defect, not a feature.
 
 ## Severity convention

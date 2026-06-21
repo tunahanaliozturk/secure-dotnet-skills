@@ -61,3 +61,8 @@ Directs the agent to walk .NET / ASP.NET Core async and concurrent code through 
 ## Example
 
 See [`examples/async-concurrency-review/`](../../examples/async-concurrency-review/).
+
+## Related skills
+
+- [dotnet-performance-review](../dotnet-performance-review/SKILL.md) — use for broader performance review covering allocations, LINQ, caching, and serialization.
+- [resilience-review](../resilience-review/SKILL.md) — use to review timeout and cancellation handling on downstream calls.

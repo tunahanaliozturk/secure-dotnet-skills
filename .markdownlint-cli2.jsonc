@@ -1,0 +1,21 @@
+{
+  // Lenient config for skill content: disable rules that are formatting taste
+  // (our skills use compact tables and code-dense examples), and keep the rules
+  // that catch real hygiene/breakage. The structural validator (node --test) is
+  // the primary gate; markdownlint is a secondary hygiene check.
+  "config": {
+    "MD013": false, // line length — prose and code samples run long
+    "MD033": false, // inline HTML — allowed where needed
+    "MD041": false, // first line heading — files lead with YAML frontmatter
+    "MD024": { "siblings_only": true }, // duplicate headings only among siblings
+    "MD060": false, // table column style — compact tables are intentional
+    "MD032": false, // blanks around lists — dense checklists run tight
+    "MD031": false, // blanks around fences — fences in lists/tables
+    "MD040": false, // fenced code language — some illustrative fences are untagged
+    "MD036": false, // emphasis as heading — bold lead-ins are intentional
+    "MD029": false, // ordered list prefix style
+    "MD022": false  // blanks around headings
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules", "docs/superpowers/**"]
+}

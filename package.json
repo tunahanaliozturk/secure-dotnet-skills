@@ -1,0 +1,14 @@
+{
+  "name": "secure-dotnet-skills",
+  "version": "0.2.0",
+  "description": "Judgment agent skills for secure, production-grade .NET on Azure.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

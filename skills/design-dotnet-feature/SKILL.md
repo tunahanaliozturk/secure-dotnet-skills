@@ -50,3 +50,8 @@ Directs the agent to think through a feature's structure — command/query split
 ## Example
 
 See [`examples/design-dotnet-feature/`](../../examples/design-dotnet-feature/).
+
+## Related skills
+
+- [api-contract-review](../api-contract-review/SKILL.md) — use to review the HTTP contract of endpoints produced by the feature design.
+- [solid-review](../solid-review/SKILL.md) — use to review the feature design against SOLID principles and Clean Architecture boundaries.

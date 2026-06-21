@@ -51,3 +51,8 @@ Directs the agent to audit a .NET / ASP.NET Core application for secret-handling
 ## Example
 
 See [`examples/secrets-config-audit/`](../../examples/secrets-config-audit/).
+
+## Related skills
+
+- [dotnet-security-review](../dotnet-security-review/SKILL.md) — use for a full security review beyond secret handling (injection, crypto, deserialization).
+- [azure-hardening-review](../azure-hardening-review/SKILL.md) — use to review Key Vault configuration, RBAC roles, and managed identity posture in Azure infrastructure.

@@ -83,3 +83,8 @@ Directs the agent to walk an ASP.NET Core endpoint or data flow through all six 
 ## Example
 
 See [`examples/threat-model-endpoint/`](../../examples/threat-model-endpoint/).
+
+## Related skills
+
+- [rate-limiting-review](../rate-limiting-review/SKILL.md) — use to review DoS mitigations including limiter algorithm, partitioning, and 429 semantics.
+- [dotnet-security-review](../dotnet-security-review/SKILL.md) — use to perform a full lens-by-lens security code review after threat modeling.
