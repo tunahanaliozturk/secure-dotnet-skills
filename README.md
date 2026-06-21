@@ -102,7 +102,7 @@ The `SKILL.md` files are the open-standard source: they are plain markdown with 
 ## Philosophy
 
 - **Judgment-preserving.** Each skill guides how to think, not what to conclude. Steps are numbered process, not rigid scripts. The agent retains discretion on severity, context, and trade-offs.
-- **Composable.** Install only what your project needs. A library project needs `dotnet-security-review` and `solid-review`; a greenfield Azure service benefits from all twelve. Skills do not depend on each other.
+- **Composable.** Install only what your project needs. A library project needs `dotnet-security-review` and `solid-review`; a greenfield Azure service benefits from all sixteen. Skills do not depend on each other.
 - **Depth over breadth.** Every check names a concrete .NET type, attribute, or configuration key. Generic advice is a defect, not a feature.
 
 ## Severity convention
