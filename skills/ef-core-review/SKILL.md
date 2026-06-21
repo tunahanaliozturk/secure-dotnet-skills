@@ -50,3 +50,8 @@ Directs the agent to perform a systematic review of Entity Framework Core usage 
 ## Example
 
 See [`examples/ef-core-review/`](../../examples/ef-core-review/).
+
+## Related skills
+
+- [dotnet-performance-review](../dotnet-performance-review/SKILL.md) — use for broad .NET performance review beyond EF Core queries (allocations, async, caching).
+- [dotnet-security-review](../dotnet-security-review/SKILL.md) — use to catch raw-SQL injection and other security issues across the full service.

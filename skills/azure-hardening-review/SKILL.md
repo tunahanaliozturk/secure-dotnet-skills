@@ -52,3 +52,8 @@ Directs the agent to audit Azure resource definitions for the hardening gaps mos
 ## Example
 
 See [`examples/azure-hardening-review/`](../../examples/azure-hardening-review/).
+
+## Related skills
+
+- [container-deployment-review](../container-deployment-review/SKILL.md) — use to review Dockerfile, runtime user, health probes, and secrets for container delivery.
+- [secrets-config-audit](../secrets-config-audit/SKILL.md) — use for deeper review of Key Vault wiring and managed-identity usage in the .NET app.
