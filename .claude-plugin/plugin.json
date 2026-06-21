@@ -2,7 +2,7 @@
   "name": "secure-dotnet-skills",
   "displayName": "Secure .NET on Azure Skills (Aegis)",
   "description": "Judgment skills that keep a coding agent sharp on secure .NET on Azure: security review, threat modeling, secret/config audit, Azure hardening, auth review, feature design, EF Core review, and dependency checks.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Tunahan Ali Ozturk", "url": "https://github.com/tunahanaliozturk" },
   "homepage": "https://github.com/tunahanaliozturk/secure-dotnet-skills",
   "repository": "https://github.com/tunahanaliozturk/secure-dotnet-skills",

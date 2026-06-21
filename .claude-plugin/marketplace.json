@@ -6,7 +6,7 @@
       "name": "secure-dotnet-skills",
       "source": "./",
       "description": "Judgment skills for secure .NET on Azure: review, threat modeling, secrets/config audit, Azure hardening, auth, feature design, EF Core, and dependency checks.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "license": "MIT",
       "keywords": ["dotnet", "azure", "security", "appsec", "skills"]
     }
